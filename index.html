@@ -1,46 +1,123 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-  <meta charset="UTF-8" />
-  <title>Visualiseur Oud • Guitare • Cajón</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="style.css" />
+<meta charset="UTF-8">
+<title>Visualiseur Audio Simple</title>
+<style>
+  html, body {
+    margin: 0;
+    background: #000;
+    overflow: hidden;
+  }
+  #file {
+    position: fixed;
+    top: 20px;
+    left: 20px;
+    z-index: 10;
+    padding: 10px 14px;
+    background: #ffffff22;
+    color: white;
+    border-radius: 8px;
+    cursor: pointer;
+    font-family: sans-serif;
+  }
+  input { display: none; }
+  canvas {
+    position: fixed;
+    inset: 0;
+  }
+</style>
 </head>
 <body>
-  <!-- Panneau de contrôle -->
-  <div class="ui">
-    <label class="file">
-      <input id="fileInput" type="file" accept="audio/*" />
-      Charger un audio (WAV/MP3)
-    </label>
 
-    <button id="micBtn">Micro (oud / guitare / cajón)</button>
+<label id="file">
+  Charger un audio
+  <input type="file" id="audioFile" accept="audio/*">
+</label>
 
-    <select id="preset" title="Palette couleurs">
-      <option value="alhambra">Nuit d'Alhambra (rouge+or)</option>
-      <option value="sable">Sable & Thé (ocre/bois)</option>
-      <option value="crepuscule">Désert au crépuscule (violet/bleu)</option>
-      <option value="minimal">Minimal crème</option>
-    </select>
+<canvas id="canvas"></canvas>
 
-    <label class="chk">
-      <input id="showRing" type="checkbox" checked /> Anneau audio
-    </label>
-    <label class="chk">
-      <input id="showWave" type="checkbox" checked /> Waveform
-    </label>
-    <label class="chk">
-      <input id="showParticles" type="checkbox" checked /> Particules
-    </label>
-    <label class="chk">
-      <input id="chroma" type="checkbox" /> Fond vert (chroma key)
-    </label>
-    <button id="hideUIBtn" title="Raccourci: H">Masquer UI</button>
-  </div>
+<script>
+const fileInput = document.getElementById("audioFile");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+let audioCtx, analyser, data, source;
 
-  <!-- Canvas -->
-  <canvas id="stage"></canvas>
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resize();
+window.onresize = resize;
 
-  <script defer src="visualizer.js"></script>
+// Projet : simple waveform + anneau
+function draw() {
+  requestAnimationFrame(draw);
+  if (!analyser) return;
+
+  analyser.getByteFrequencyData(data);
+
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  
+  // --- ANNEAU ---
+  const cx = canvas.width/2;
+  const cy = canvas.height/2;
+  const radius = Math.min(canvas.width, canvas.height)*0.25;
+  ctx.beginPath();
+  ctx.lineWidth = 4;
+  ctx.strokeStyle = "#d4af37"; // or
+  const n = data.length;
+  for (let i=0; i<n; i++) {
+    const angle = (i/n) * Math.PI*2;
+    const amp = data[i]/255;
+    const r = radius + amp*40;
+    const x = cx + Math.cos(angle)*r;
+    const y = cy + Math.sin(angle)*r;
+    if (i===0) ctx.moveTo(x,y);
+    else ctx.lineTo(x,y);
+  }
+  ctx.closePath();
+  ctx.stroke();
+
+  // --- WAVEFORM ---
+  analyser.getByteTimeDomainData(data);
+  ctx.beginPath();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "#ffffff";
+  const mid = cy + radius + 80;
+  for (let i=0; i<n; i++) {
+    const x = (i/n)*canvas.width;
+    const y = mid + ((data[i]-128)/128)*80;
+    if (i===0) ctx.moveTo(x,y);
+    else ctx.lineTo(x,y);
+  }
+  ctx.stroke();
+}
+
+fileInput.addEventListener("change", async function() {
+  const file = this.files[0];
+  if (!file) return;
+
+  // Contexte audio
+  audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 1024;
+  data = new Uint8Array(analyser.frequencyBinCount);
+
+  // Création Audio
+  const audio = new Audio();
+  audio.src = URL.createObjectURL(file);
+  audio.loop = true;
+  audio.crossOrigin = "anonymous";
+  await audio.play();
+
+  // Connexion graphe audio
+  const src = audioCtx.createMediaElementSource(audio);
+  src.connect(analyser);
+  analyser.connect(audioCtx.destination);
+
+  draw();
+});
+</script>
 </body>
 </html>
