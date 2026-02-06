@@ -2,102 +2,168 @@
 <html lang="fr">
 <head>
 <meta charset="UTF-8">
-<title>Test Visualiseur</title>
+<title>Visualiseur • Barres centrées + miroir</title>
 <style>
   html, body {
     margin: 0;
-    background: #000;
+    background: #0b0b0b; /* fond sombre élégant */
+    height: 100%;
     overflow: hidden;
+    font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
   }
-  #file {
+  /* Conteneur pour centrer la zone de visualisation */
+  .wrap {
     position: fixed;
-    top: 20px;
-    left: 20px;
-    padding: 10px 14px;
+    inset: 0;
+    display: grid;
+    place-items: center; /* centre au milieu de l’écran */
+  }
+  /* Zone compactée (tu peux ajuster la taille ici) */
+  .box {
+    position: relative;
+    width: min(900px, 90vw);   /* largeur max 900px */
+    height: 280px;             /* hauteur compacte */
+  }
+  #canvas {
+    position: absolute;
+    inset: 0;
+  }
+
+  /* Bouton simple pour charger l’audio */
+  .file {
+    position: fixed;
+    top: 16px;
+    left: 16px;
+    padding: 8px 12px;
     background: #ffffff22;
-    color: white;
+    color: #eee;
     border-radius: 8px;
-    font-family: sans-serif;
     cursor: pointer;
     z-index: 10;
   }
-  #file input {
-    display: none;
-  }
-  canvas {
-    position: fixed;
-    inset: 0;
-  }
+  .file input { display: none; }
 </style>
 </head>
 <body>
 
-<label id="file">
+<label class="file">
   Charger un audio
   <input id="audioFile" type="file" accept="audio/*">
 </label>
 
-<canvas id="canvas"></canvas>
+<div class="wrap">
+  <div class="box">
+    <canvas id="canvas"></canvas>
+  </div>
+</div>
 
 <script>
-const file = document.getElementById("audioFile");
+/* -----------------------------
+   Réglages faciles à modifier
+------------------------------*/
+const SETTINGS = {
+  bars: 64,              // nombre de barres
+  gap: 0.25,             // 0..1 -> 0 = barres collées, 0.25 = 25% d’espace
+  mirror: true,          // effet miroir vertical (haut + bas)
+  heightFactor: 0.9,     // amplitude max relative à la moitié de la box
+  fftSize: 512,          // 256/512/1024
+  smoothing: 0.85,       // lissage visuel (0..1)
+  // Couleurs: dégradé du bas vers le haut (et symétrique)
+  colors: ["#e43f5a", "#ffa62b", "#ffd166"] // rouge -> orange -> doré
+};
+
+const fileInput = document.getElementById("audioFile");
 const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 
-function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-}
-resize();
-window.onresize = resize;
-
-// --- TEST VISUEL --- (tu dois voir un carré rouge)
-ctx.fillStyle = "red";
-ctx.fillRect(20, 20, 100, 100);
+const box = document.querySelector(".box");
 
 let audioCtx, analyser, data;
 
-function animateBars() {
-  requestAnimationFrame(animateBars);
+// Adapter le canvas à la taille de .box
+function resize() {
+  const { width, height } = box.getBoundingClientRect();
+  canvas.width = Math.floor(width);
+  canvas.height = Math.floor(height);
+}
+resize();
+addEventListener("resize", resize);
+
+// Crée un dégradé vertical pour les barres
+function makeGradient() {
+  const g = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  // on répartit les couleurs sur 0..1
+  for (let i = 0; i < SETTINGS.colors.length; i++) {
+    const t = i / (SETTINGS.colors.length - 1);
+    g.addColorStop(t, SETTINGS.colors[i]);
+  }
+  return g;
+}
+
+let barFill = null;
+
+// Dessin principal (barres centrées + miroir)
+function drawBars() {
+  requestAnimationFrame(drawBars);
   if (!analyser) return;
 
   analyser.getByteFrequencyData(data);
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  const bars = 80;
-  const barWidth = canvas.width / bars;
+  if (!barFill) barFill = makeGradient();
+  ctx.fillStyle = barFill;
 
-  for (let i = 0; i < bars; i++) {
-    const value = data[i];
+  const N = SETTINGS.bars;
+  const spacing = canvas.width / N; // largeur “pas”
+  // largeur réelle de la barre (selon gap)
+  const barWidth = spacing * (1 - SETTINGS.gap);
+
+  // hauteur max par demi-zone (car miroir)
+  const halfH = (canvas.height / 2) * SETTINGS.heightFactor;
+
+  for (let i = 0; i < N; i++) {
+    // on échantillonne le spectre (si data < N, on projette)
+    const idx = Math.floor(i * (data.length / N));
+    const value = data[idx] || 0;
     const percent = value / 255;
-    const height = percent * (canvas.height * 0.6);
-    const x = i * barWidth;
-    const y = canvas.height - height;
+    const h = percent * halfH;
 
-    ctx.fillStyle = "#d4af37";
-    ctx.fillRect(x, y, barWidth * 0.7, height);
+    const x = i * spacing + (spacing - barWidth) / 2;
+    const midY = canvas.height / 2;
+
+    if (SETTINGS.mirror) {
+      // barre vers le haut (miroir)
+      ctx.fillRect(x, midY - h, barWidth, h);
+      // barre vers le bas (miroir)
+      ctx.fillRect(x, midY, barWidth, h);
+    } else {
+      // sans miroir: uniquement vers le haut
+      ctx.fillRect(x, midY - h, barWidth, h);
+    }
   }
 }
 
-file.addEventListener("change", async () => {
-  const f = file.files[0];
-  if (!f) return;
+// Chargement audio
+fileInput.addEventListener("change", async () => {
+  const file = fileInput.files[0];
+  if (!file) return;
 
+  // Création graphe audio
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   analyser = audioCtx.createAnalyser();
-  analyser.fftSize = 256;
+  analyser.fftSize = SETTINGS.fftSize;
+  analyser.smoothingTimeConstant = SETTINGS.smoothing;
   data = new Uint8Array(analyser.frequencyBinCount);
 
-  const audio = new Audio();
-  audio.src = URL.createObjectURL(f);
+  const audio = new Audio(URL.createObjectURL(file));
   audio.crossOrigin = "anonymous";
   audio.loop = true;
 
-  try {
-    await audio.play();
-  } catch (err) {
-    alert("Clique dans la page puis re-sélectionne le fichier.");
+  // Démarrage audio (autoplay peut demander un clic)
+  try { await audio.play(); }
+  catch { 
+    alert("Clique une fois sur la page puis recharge le fichier audio.");
     return;
   }
 
@@ -105,7 +171,10 @@ file.addEventListener("change", async () => {
   src.connect(analyser);
   analyser.connect(audioCtx.destination);
 
-  animateBars();
+  // Recréer le dégradé si la taille change
+  barFill = makeGradient();
+
+  drawBars();
 });
 </script>
 </body>
