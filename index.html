@@ -1,1 +1,46 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Visualiseur Oud • Guitare • Cajón</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Panneau de contrôle -->
+  <div class="ui">
+    <label class="file">
+      <input id="fileInput" type="file" accept="audio/*" />
+      Charger un audio (WAV/MP3)
+    </label>
 
+    <button id="micBtn">Micro (oud / guitare / cajón)</button>
+
+    <select id="preset" title="Palette couleurs">
+      <option value="alhambra">Nuit d'Alhambra (rouge+or)</option>
+      <option value="sable">Sable & Thé (ocre/bois)</option>
+      <option value="crepuscule">Désert au crépuscule (violet/bleu)</option>
+      <option value="minimal">Minimal crème</option>
+    </select>
+
+    <label class="chk">
+      <input id="showRing" type="checkbox" checked /> Anneau audio
+    </label>
+    <label class="chk">
+      <input id="showWave" type="checkbox" checked /> Waveform
+    </label>
+    <label class="chk">
+      <input id="showParticles" type="checkbox" checked /> Particules
+    </label>
+    <label class="chk">
+      <input id="chroma" type="checkbox" /> Fond vert (chroma key)
+    </label>
+    <button id="hideUIBtn" title="Raccourci: H">Masquer UI</button>
+  </div>
+
+  <!-- Canvas -->
+  <canvas id="stage"></canvas>
+
+  <script defer src="visualizer.js"></script>
+</body>
+</html>
