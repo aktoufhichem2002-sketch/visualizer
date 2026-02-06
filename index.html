@@ -1,55 +1,66 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-<meta charset="UTF-8">
-<title>Visualiseur • Barres centrées + miroir</title>
+<meta charset="UTF-8" />
+<title>Visualiseur • Bars + Miroir + Record (Alpha)</title>
 <style>
+  /* Page et fond 100% transparents */
   html, body {
     margin: 0;
-    background: #0b0b0b; /* fond sombre élégant */
     height: 100%;
+    background: transparent;
     overflow: hidden;
     font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
   }
-  /* Conteneur pour centrer la zone de visualisation */
+  /* Zone centrée pour le visualizer */
   .wrap {
     position: fixed;
     inset: 0;
     display: grid;
-    place-items: center; /* centre au milieu de l’écran */
+    place-items: center;
   }
-  /* Zone compactée (tu peux ajuster la taille ici) */
   .box {
     position: relative;
-    width: min(900px, 90vw);   /* largeur max 900px */
-    height: 280px;             /* hauteur compacte */
+    width: min(900px, 90vw);
+    height: 280px; /* Ajuste la hauteur ici */
   }
   #canvas {
     position: absolute;
     inset: 0;
+    /* rien, on garde transparent */
   }
 
-  /* Bouton simple pour charger l’audio */
-  .file {
+  /* UI minimale : Charger / Record */
+  .ui {
     position: fixed;
     top: 16px;
     left: 16px;
-    padding: 8px 12px;
-    background: #ffffff22;
-    color: #eee;
-    border-radius: 8px;
-    cursor: pointer;
+    display: flex;
+    gap: 8px;
     z-index: 10;
   }
+  .btn, .file {
+    padding: 8px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    color: #eee;
+    background: #00000055; /* semi-transparent pour voir que c'est un bouton */
+    border: 1px solid #ffffff22;
+    user-select: none;
+  }
   .file input { display: none; }
+  .btn.recording { background: #b00020cc; } /* couleur différente quand ça enregistre */
 </style>
 </head>
 <body>
 
-<label class="file">
-  Charger un audio
-  <input id="audioFile" type="file" accept="audio/*">
-</label>
+<div class="ui">
+  <label class="file">
+    Charger un audio
+    <input id="audioFile" type="file" accept="audio/*" />
+  </label>
+  <button id="recBtn" class="btn">⏺️ Record (WebM alpha)</button>
+</div>
 
 <div class="wrap">
   <div class="box">
@@ -58,41 +69,42 @@
 </div>
 
 <script>
-/* -----------------------------
-   Réglages faciles à modifier
-------------------------------*/
+/* -------- Réglages faciles -------- */
 const SETTINGS = {
-  bars: 64,              // nombre de barres
-  gap: 0.25,             // 0..1 -> 0 = barres collées, 0.25 = 25% d’espace
-  mirror: true,          // effet miroir vertical (haut + bas)
-  heightFactor: 0.9,     // amplitude max relative à la moitié de la box
-  fftSize: 512,          // 256/512/1024
-  smoothing: 0.85,       // lissage visuel (0..1)
-  // Couleurs: dégradé du bas vers le haut (et symétrique)
-  colors: ["#e43f5a", "#ffa62b", "#ffd166"] // rouge -> orange -> doré
+  bars: 64,            // nombre de barres
+  gap: 0.25,           // 0..1 -> 0 = collées ; 0.25 = 25% d'espace
+  mirror: true,        // barres en miroir (haut + bas)
+  heightFactor: 0.9,   // amplitude max relative à la moitié de la box
+  fftSize: 512,        // 256/512/1024
+  smoothing: 0.85,     // lissage visuel (0..1)
+  // Dégradé vertical (bas -> haut). Change pour ta palette.
+  colors: ["#6b4e2e", "#c08a2e", "#f0e3c0"] // sable -> safran -> crème
 };
 
 const fileInput = document.getElementById("audioFile");
+const recBtn = document.getElementById("recBtn");
 const canvas = document.getElementById("canvas");
-const ctx = canvas.getContext("2d");
+const ctx = canvas.getContext("2d", { alpha: true }); // alpha pour transparence
 
 const box = document.querySelector(".box");
 
 let audioCtx, analyser, data;
+let mediaRecorder = null, chunks = [], chosenMime = null;
 
-// Adapter le canvas à la taille de .box
 function resize() {
   const { width, height } = box.getBoundingClientRect();
   canvas.width = Math.floor(width);
   canvas.height = Math.floor(height);
+  // Recrée le dégradé après resize
+  barFill = null;
 }
 resize();
 addEventListener("resize", resize);
 
-// Crée un dégradé vertical pour les barres
+/* ---- Dégradé de couleur pour les barres ---- */
+let barFill = null;
 function makeGradient() {
   const g = ctx.createLinearGradient(0, 0, 0, canvas.height);
-  // on répartit les couleurs sur 0..1
   for (let i = 0; i < SETTINGS.colors.length; i++) {
     const t = i / (SETTINGS.colors.length - 1);
     g.addColorStop(t, SETTINGS.colors[i]);
@@ -100,56 +112,47 @@ function makeGradient() {
   return g;
 }
 
-let barFill = null;
-
-// Dessin principal (barres centrées + miroir)
+/* ---- Boucle de dessin : barres centrées + miroir ---- */
 function drawBars() {
   requestAnimationFrame(drawBars);
   if (!analyser) return;
 
   analyser.getByteFrequencyData(data);
-
+  // fond transparent : on efface juste
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   if (!barFill) barFill = makeGradient();
   ctx.fillStyle = barFill;
 
   const N = SETTINGS.bars;
-  const spacing = canvas.width / N; // largeur “pas”
-  // largeur réelle de la barre (selon gap)
+  const spacing = canvas.width / N;
   const barWidth = spacing * (1 - SETTINGS.gap);
-
-  // hauteur max par demi-zone (car miroir)
   const halfH = (canvas.height / 2) * SETTINGS.heightFactor;
+  const midY = canvas.height / 2;
 
   for (let i = 0; i < N; i++) {
-    // on échantillonne le spectre (si data < N, on projette)
     const idx = Math.floor(i * (data.length / N));
     const value = data[idx] || 0;
     const percent = value / 255;
     const h = percent * halfH;
-
     const x = i * spacing + (spacing - barWidth) / 2;
-    const midY = canvas.height / 2;
 
     if (SETTINGS.mirror) {
-      // barre vers le haut (miroir)
+      // vers le haut
       ctx.fillRect(x, midY - h, barWidth, h);
-      // barre vers le bas (miroir)
+      // vers le bas
       ctx.fillRect(x, midY, barWidth, h);
     } else {
-      // sans miroir: uniquement vers le haut
       ctx.fillRect(x, midY - h, barWidth, h);
     }
   }
 }
 
-// Chargement audio
+/* ---- Chargement audio ---- */
 fileInput.addEventListener("change", async () => {
   const file = fileInput.files[0];
   if (!file) return;
 
-  // Création graphe audio
   audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   analyser = audioCtx.createAnalyser();
   analyser.fftSize = SETTINGS.fftSize;
@@ -160,10 +163,9 @@ fileInput.addEventListener("change", async () => {
   audio.crossOrigin = "anonymous";
   audio.loop = true;
 
-  // Démarrage audio (autoplay peut demander un clic)
   try { await audio.play(); }
-  catch { 
-    alert("Clique une fois sur la page puis recharge le fichier audio.");
+  catch {
+    alert("Clique une fois sur la page, puis re-sélectionne le fichier audio.");
     return;
   }
 
@@ -171,11 +173,69 @@ fileInput.addEventListener("change", async () => {
   src.connect(analyser);
   analyser.connect(audioCtx.destination);
 
-  // Recréer le dégradé si la taille change
-  barFill = makeGradient();
-
   drawBars();
+});
+
+/* ---- Enregistrement du canvas en WebM alpha ---- */
+function pickSupportedMime() {
+  const candidates = [
+    "video/webm;codecs=vp9,opus",
+    "video/webm;codecs=vp9",
+    "video/webm;codecs=vp8,opus",
+    "video/webm;codecs=vp8",
+    "video/webm" // fallback (peut perdre l'alpha)
+  ];
+  for (const m of candidates) {
+    if (MediaRecorder.isTypeSupported(m)) return m;
+  }
+  return ""; // laisser le navigateur choisir
+}
+
+function startRecording() {
+  const stream = canvas.captureStream(60); // 60 fps
+  chosenMime = pickSupportedMime();
+  try {
+    mediaRecorder = new MediaRecorder(stream, {
+      mimeType: chosenMime || undefined,
+      videoBitsPerSecond: 8000000 // 8 Mbps
+    });
+  } catch (e) {
+    alert("Enregistrement non supporté dans ce navigateur : " + e.message);
+    return;
+  }
+
+  chunks = [];
+  mediaRecorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  mediaRecorder.onstop = () => {
+    const blob = new Blob(chunks, { type: chosenMime || "video/webm" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "visualizer-alpha.webm";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  mediaRecorder.start(); // start recording
+  recBtn.textContent = "⏹️ Stop";
+  recBtn.classList.add("recording");
+}
+
+function stopRecording() {
+  if (mediaRecorder && mediaRecorder.state !== "inactive") {
+    mediaRecorder.stop();
+  }
+  recBtn.textContent = "⏺️ Record (WebM alpha)";
+  recBtn.classList.remove("recording");
+}
+
+recBtn.addEventListener("click", () => {
+  if (!mediaRecorder || mediaRecorder.state === "inactive") startRecording();
+  else stopRecording();
 });
 </script>
 </body>
 </html>
+``
